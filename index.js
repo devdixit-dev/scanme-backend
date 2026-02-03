@@ -199,12 +199,14 @@ app.post('/api/scan/upload', upload.single('qrImage'), async (req, res) => {
 
   const parsed = parseQRData(qrData);
 
+  const imageUrl = `${process.env.BACKEND_URL}/uploads/${req.file.filename}`;
+
   const record = await ScanHistory.create({
     userId: req.userId,
     qrType: parsed.type,
     qrData,
     decodedData: parsed.parsed,
-    imageUrl: `/uploads/${req.file.filename}`
+    imageUrl
   });
 
   res.json({ success: true, data: record });
@@ -222,11 +224,13 @@ app.post('/api/generate', async (req, res) => {
 
   await QRCode.toFile(outPath, content);
 
+  const imageUrl = `${process.env.BACKEND_URL}/qr-codes/${filename}`;
+
   const record = await QRGeneration.create({
     userId: req.userId,
     qrType: type,
     data,
-    imageUrl: `/qr-codes/${filename}`
+    imageUrl
   });
 
   res.json({ success: true, data: record });
