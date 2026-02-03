@@ -4,7 +4,7 @@
   "description": "Complete backend replica of scanme.org with QR scanning and generation features",
   "main": "scanme-backend.ts",
   "scripts": {
-    "dev": "tsx watch index.ts",
+    "dev": "tsx watch index.js",
     "start": "node dist/index.js",
     "build": "tsc",
     "lint": "eslint . --ext .ts",
