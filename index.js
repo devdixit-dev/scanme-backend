@@ -148,6 +148,183 @@ const upload = multer({
    HELPERS
 ===================================================== */
 
+const normalizeValue = value =>
+  value === undefined || value === null ? '' : String(value).trim();
+
+const escapeWifiValue = value =>
+  String(value).replace(/([\\;,:"])/g, '\\$1');
+
+const unescapeWifiValue = value =>
+  String(value).replace(/\\([\\;,:"])/g, '$1');
+
+const toIcsDate = value => {
+  const input = normalizeValue(value);
+  if (!input) return '';
+
+  if (/^\d{8}$/.test(input) || /^\d{8}T\d{6}Z?$/.test(input)) return input;
+
+  const [datePart, timePart] = input.split('T');
+  if (!datePart) return '';
+
+  const date = datePart.replace(/-/g, '');
+  if (!timePart) return date;
+
+  const time = timePart.replace(/:/g, '').padEnd(6, '0');
+  return `${date}T${time}`;
+};
+
+const fromIcsDate = value => {
+  const input = normalizeValue(value);
+  if (!input) return '';
+
+  if (/^\d{8}$/.test(input)) {
+    return `${input.slice(0, 4)}-${input.slice(4, 6)}-${input.slice(6, 8)}`;
+  }
+
+  if (/^\d{8}T\d{6}Z?$/.test(input)) {
+    const date = `${input.slice(0, 4)}-${input.slice(4, 6)}-${input.slice(6, 8)}`;
+    const time = `${input.slice(9, 11)}:${input.slice(11, 13)}`;
+    return `${date}T${time}`;
+  }
+
+  return input;
+};
+
+function buildQRPayload(type, data) {
+  const payload = typeof data === 'object' && data !== null ? data : {};
+  const raw = typeof data === 'string' ? data : '';
+
+  switch (type) {
+    case 'url': {
+      const url = normalizeValue(payload.url || raw);
+      if (!url) return null;
+      return { content: url, data: { url } };
+    }
+    case 'text': {
+      const text = normalizeValue(payload.text || raw);
+      if (!text) return null;
+      return { content: text, data: { text } };
+    }
+    case 'wifi': {
+      const ssid = normalizeValue(payload.ssid);
+      const password = normalizeValue(payload.password);
+      if (!ssid) return null;
+
+      let encryption = normalizeValue(payload.encryption);
+      const upper = encryption.toUpperCase();
+      if (!password || upper === 'NOPASS' || upper === 'NONE') {
+        encryption = 'nopass';
+      } else if (upper === 'WEP') {
+        encryption = 'WEP';
+      } else {
+        encryption = 'WPA';
+      }
+
+      const wifiParts = [
+        `WIFI:T:${encryption};`,
+        `S:${escapeWifiValue(ssid)};`,
+        password ? `P:${escapeWifiValue(password)};` : '',
+        ';'
+      ];
+
+      return {
+        content: wifiParts.join(''),
+        data: { ssid, password, encryption }
+      };
+    }
+    case 'vcard': {
+      const firstName = normalizeValue(payload.firstName);
+      const lastName = normalizeValue(payload.lastName);
+      const phone = normalizeValue(payload.phone);
+      const email = normalizeValue(payload.email);
+      const organization = normalizeValue(payload.organization);
+
+      if (!firstName && !lastName && !phone && !email) return null;
+
+      const fullName = [firstName, lastName].filter(Boolean).join(' ');
+      const lines = [
+        'BEGIN:VCARD',
+        'VERSION:3.0',
+        `N:${lastName};${firstName}`,
+        fullName ? `FN:${fullName}` : null,
+        organization ? `ORG:${organization}` : null,
+        phone ? `TEL;TYPE=CELL:${phone}` : null,
+        email ? `EMAIL:${email}` : null,
+        'END:VCARD'
+      ].filter(Boolean);
+
+      return {
+        content: lines.join('\n'),
+        data: { firstName, lastName, phone, email, organization }
+      };
+    }
+    case 'sms': {
+      const number = normalizeValue(payload.number);
+      const message = normalizeValue(payload.message);
+      if (!number) return null;
+      const content = `SMSTO:${number}${message ? `:${message}` : ''}`;
+      return { content, data: { number, message } };
+    }
+    case 'call': {
+      const number = normalizeValue(payload.number || raw);
+      if (!number) return null;
+      return { content: `tel:${number}`, data: { number } };
+    }
+    case 'mail': {
+      const email = normalizeValue(payload.email || raw);
+      if (!email) return null;
+      const subject = normalizeValue(payload.subject);
+      const body = normalizeValue(payload.body);
+
+      const params = new URLSearchParams();
+      if (subject) params.set('subject', subject);
+      if (body) params.set('body', body);
+
+      const query = params.toString();
+      return {
+        content: `mailto:${email}${query ? `?${query}` : ''}`,
+        data: { email, subject, body }
+      };
+    }
+    case 'location': {
+      const latitude = normalizeValue(payload.latitude);
+      const longitude = normalizeValue(payload.longitude);
+      if (!latitude || !longitude) return null;
+      return {
+        content: `geo:${latitude},${longitude}`,
+        data: { latitude, longitude }
+      };
+    }
+    case 'event': {
+      const title = normalizeValue(payload.title);
+      const location = normalizeValue(payload.location);
+      const startDate = normalizeValue(payload.startDate);
+      const endDate = normalizeValue(payload.endDate);
+
+      if (!title && !startDate && !endDate) return null;
+
+      const lines = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'BEGIN:VEVENT',
+        title ? `SUMMARY:${title}` : null,
+        location ? `LOCATION:${location}` : null,
+        startDate ? `DTSTART:${toIcsDate(startDate)}` : null,
+        endDate ? `DTEND:${toIcsDate(endDate)}` : null,
+        'END:VEVENT',
+        'END:VCALENDAR'
+      ].filter(Boolean);
+
+      return {
+        content: lines.join('\n'),
+        data: { title, location, startDate, endDate }
+      };
+    }
+    default:
+      return null;
+  }
+}
+
 async function decodeQRFromImage(imagePath) {
   try {
     const image = await Jimp.read(imagePath);
@@ -168,13 +345,188 @@ async function decodeQRFromImage(imagePath) {
   }
 }
 
-function parseQRData(data) {
-  if (data.startsWith('http')) return { type: 'url', parsed: { url: data } };
-  if (data.startsWith('tel:')) return { type: 'call', parsed: { number: data.slice(4) } };
-  if (data.startsWith('smsto:')) {
-    const [number, message] = data.slice(6).split(':');
-    return { type: 'sms', parsed: { number, message } };
+function parseQRData(rawData) {
+  const data = normalizeValue(rawData);
+  if (!data) return { type: 'text', parsed: { text: '' } };
+
+  const lower = data.toLowerCase();
+  if (lower.startsWith('http://') || lower.startsWith('https://')) {
+    return { type: 'url', parsed: { url: data, text: data } };
   }
+
+  if (lower.startsWith('wifi:')) {
+    const payload = data.slice(5);
+    const fields = payload.split(';').filter(Boolean);
+    let ssid = '';
+    let password = '';
+    let encryption = '';
+
+    fields.forEach(field => {
+      const upperField = field.toUpperCase();
+      if (upperField.startsWith('S:')) ssid = unescapeWifiValue(field.slice(2));
+      if (upperField.startsWith('P:')) password = unescapeWifiValue(field.slice(2));
+      if (upperField.startsWith('T:')) encryption = field.slice(2);
+    });
+
+    const encryptionUpper = encryption.toUpperCase();
+    const normalizedEncryption = encryptionUpper === 'WEP' ? 'WEP' :
+      (encryptionUpper === 'NOPASS' || encryptionUpper === 'NONE' || !encryptionUpper ? 'nopass' : 'WPA');
+
+    const parts = [];
+    if (ssid) parts.push(`SSID: ${ssid}`);
+    if (password) parts.push(`Password: ${password}`);
+    if (normalizedEncryption) parts.push(`Encryption: ${normalizedEncryption}`);
+
+    return {
+      type: 'wifi',
+      parsed: {
+        ssid,
+        password,
+        encryption: normalizedEncryption,
+        text: parts.length ? parts.join(' | ') : data
+      }
+    };
+  }
+
+  if (lower.startsWith('begin:vcard')) {
+    const lines = data.split(/\r?\n/);
+    let firstName = '';
+    let lastName = '';
+    let fullName = '';
+    let phone = '';
+    let email = '';
+    let organization = '';
+
+    lines.forEach(line => {
+      const [left, ...rest] = line.split(':');
+      const key = left.split(';')[0].toUpperCase();
+      const value = rest.join(':').trim();
+
+      if (key === 'N') {
+        const [last, first] = value.split(';');
+        lastName = lastName || normalizeValue(last);
+        firstName = firstName || normalizeValue(first);
+      }
+      if (key === 'FN') fullName = normalizeValue(value);
+      if (key === 'TEL') phone = normalizeValue(value);
+      if (key === 'EMAIL') email = normalizeValue(value);
+      if (key === 'ORG') organization = normalizeValue(value);
+    });
+
+    const displayName = fullName || [firstName, lastName].filter(Boolean).join(' ');
+    const parts = [displayName, phone, email].filter(Boolean);
+
+    return {
+      type: 'vcard',
+      parsed: {
+        firstName,
+        lastName,
+        phone,
+        email,
+        organization,
+        text: parts.length ? parts.join(' | ') : data
+      }
+    };
+  }
+
+  if (lower.startsWith('smsto:') || lower.startsWith('sms:')) {
+    const payload = data.replace(/^smsto:/i, '').replace(/^sms:/i, '');
+    const [numberPart, messagePart] = payload.split(':');
+    const number = normalizeValue(numberPart);
+    const message = normalizeValue(messagePart);
+    const text = [number, message].filter(Boolean).join(' - ');
+
+    return {
+      type: 'sms',
+      parsed: { number, message, text: text || data }
+    };
+  }
+
+  if (lower.startsWith('tel:')) {
+    const number = data.slice(4);
+    return {
+      type: 'call',
+      parsed: { number, text: number }
+    };
+  }
+
+  if (lower.startsWith('mailto:')) {
+    const payload = data.replace(/^mailto:/i, '');
+    const [address, query] = payload.split('?');
+    const params = new URLSearchParams(query || '');
+    const subject = normalizeValue(params.get('subject'));
+    const body = normalizeValue(params.get('body'));
+    const parts = [
+      normalizeValue(address),
+      subject ? `Subject: ${subject}` : '',
+      body ? `Body: ${body}` : ''
+    ].filter(Boolean);
+
+    return {
+      type: 'mail',
+      parsed: {
+        email: normalizeValue(address),
+        subject,
+        body,
+        text: parts.length ? parts.join(' | ') : data
+      }
+    };
+  }
+
+  if (lower.startsWith('geo:')) {
+    const payload = data.replace(/^geo:/i, '').split('?')[0];
+    const [lat, lon] = payload.split(',');
+    const latitude = normalizeValue(lat);
+    const longitude = normalizeValue(lon);
+
+    return {
+      type: 'location',
+      parsed: {
+        latitude,
+        longitude,
+        text: latitude && longitude ? `${latitude}, ${longitude}` : data
+      }
+    };
+  }
+
+  const upper = data.toUpperCase();
+  if (upper.includes('BEGIN:VEVENT') || upper.includes('BEGIN:VCALENDAR')) {
+    const lines = data.split(/\r?\n/);
+    let title = '';
+    let location = '';
+    let startDate = '';
+    let endDate = '';
+
+    lines.forEach(line => {
+      const [left, ...rest] = line.split(':');
+      const key = left.split(';')[0].toUpperCase();
+      const value = rest.join(':').trim();
+
+      if (key === 'SUMMARY') title = normalizeValue(value);
+      if (key === 'LOCATION') location = normalizeValue(value);
+      if (key === 'DTSTART') startDate = fromIcsDate(value);
+      if (key === 'DTEND') endDate = fromIcsDate(value);
+    });
+
+    const parts = [
+      title,
+      location ? `Location: ${location}` : '',
+      startDate ? `Start: ${startDate}` : '',
+      endDate ? `End: ${endDate}` : ''
+    ].filter(Boolean);
+
+    return {
+      type: 'event',
+      parsed: {
+        title,
+        location,
+        startDate,
+        endDate,
+        text: parts.length ? parts.join(' | ') : data
+      }
+    };
+  }
+
   return { type: 'text', parsed: { text: data } };
 }
 
@@ -218,7 +570,12 @@ app.post('/api/generate', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Invalid input' });
   }
 
-  const content = typeof data === 'string' ? data : JSON.stringify(data);
+  const payload = buildQRPayload(type, data);
+  if (!payload) {
+    return res.status(400).json({ success: false, error: 'Unsupported or incomplete payload' });
+  }
+
+  const { content, data: normalizedData } = payload;
   const filename = `qr-${Date.now()}.png`;
   const outPath = path.join(QR_OUTPUT_DIR, filename);
 
@@ -229,7 +586,7 @@ app.post('/api/generate', async (req, res) => {
   const record = await QRGeneration.create({
     userId: req.userId,
     qrType: type,
-    data,
+    data: normalizedData,
     imageUrl
   });
 
