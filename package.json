@@ -4,9 +4,9 @@
   "description": "Complete backend replica of scanme.org with QR scanning and generation features",
   "main": "scanme-backend.ts",
   "scripts": {
-    "dev": "bun --watch index.ts",
-    "start": "bun index.ts",
-    "build": "bun build index.ts --outdir ./dist --target bun",
+    "dev": "tsx watch index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc",
     "lint": "eslint . --ext .ts",
     "clean": "rm -rf uploads/* qr-codes/* dist/*"
   },
@@ -37,6 +37,7 @@
     "@types/multer": "1",
     "@types/node": "^20.10.6",
     "@types/qrcode": "^1.5.5",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.3"
   },
   "overrides": {

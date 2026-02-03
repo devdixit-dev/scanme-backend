@@ -135,7 +135,8 @@ const Analytics = mongoose.model<IAnalytics>('Analytics', AnalyticsSchema);
 
 const app = express();
 const PORT = process.env.PORT || 4000;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/scanqr';
+const MONGO_URI = process.env.MONGO_URI;
+const MONGODB_NAME = process.env.MONGODB_NAME || 'scanme_db';
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
 const QR_OUTPUT_DIR = path.join(process.cwd(), 'qr-codes');
 
@@ -277,8 +278,6 @@ async function decodeQRFromImage(imagePath: string): Promise<string | null> {
     return null;
   }
 }
-
-
 
 /**
  * Parse QR data based on type
@@ -1125,7 +1124,7 @@ app.use(errorHandler);
 async function startServer() {
   try {
     // Connect to MongoDB
-    await mongoose.connect(MONGO_URI);
+    await mongoose.connect(`${MONGO_URI}`, { dbName: 'scanme_db' });
     console.log('✅ Connected to MongoDB');
     
     // Start server
